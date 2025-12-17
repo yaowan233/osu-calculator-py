@@ -69,7 +69,7 @@ jobs:
         rm osu.Game.Resources.dll
         
         echo "=== Files to be packed ==="
-        ls -R src/osu_lib/lib
+        ls
 
     # 6. 使用 uv 构建 Wheel
     - name: Build with uv
