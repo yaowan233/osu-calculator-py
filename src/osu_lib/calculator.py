@@ -218,31 +218,26 @@ class OsuCalculator:
         accuracy = acc / 100.0
         n300, n100, n50 = 0, 0, 0
 
-        if count_good is not None or count_meh is not None:
-            n100 = count_good if count_good else 0
-            n50 = count_meh if count_meh else 0
-            n300 = total - n100 - n50 - misses
-        else:
-            if relevant <= 0: return {self.HitResult.Miss: misses}
-            rel_acc = accuracy * total / relevant
-            rel_acc = max(0.0, min(1.0, rel_acc))
+        if relevant <= 0: return {self.HitResult.Miss: misses}
+        rel_acc = accuracy * total / relevant
+        rel_acc = max(0.0, min(1.0, rel_acc))
 
-            if rel_acc >= 0.25:
-                ratio = math.pow(1 - (rel_acc - 0.25) / 0.75, 2)
-                c100 = 6 * relevant * (1 - rel_acc) / (5 * ratio + 4)
-                c50 = c100 * ratio
-                n100 = int(round(c100))
-                n50 = int(round(c100 + c50) - n100)
-            elif rel_acc >= 1.0 / 6:
-                c100 = 6 * relevant * rel_acc - relevant
-                c50 = relevant - c100
-                n100 = int(round(c100))
-                n50 = int(round(c100 + c50) - n100)
-            else:
-                c50 = 6 * relevant * rel_acc
-                n50 = int(round(c50))
-                misses = total - n50
-            n300 = total - n100 - n50 - misses
+        if rel_acc >= 0.25:
+            ratio = math.pow(1 - (rel_acc - 0.25) / 0.75, 2)
+            c100 = 6 * relevant * (1 - rel_acc) / (5 * ratio + 4)
+            c50 = c100 * ratio
+            n100 = int(round(c100))
+            n50 = int(round(c100 + c50) - n100)
+        elif rel_acc >= 1.0 / 6:
+            c100 = 6 * relevant * rel_acc - relevant
+            c50 = relevant - c100
+            n100 = int(round(c100))
+            n50 = int(round(c100 + c50) - n100)
+        else:
+            c50 = 6 * relevant * rel_acc
+            n50 = int(round(c50))
+            misses = total - n50
+        n300 = total - n100 - n50 - misses
 
         return {
             self.HitResult.Great: max(0, n300),
