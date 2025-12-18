@@ -52,12 +52,6 @@ jobs:
         # 删除不必要的文件
         rm -f src/osu_lib/lib/*.pdb
         rm -f src/osu_lib/lib/*.exe
-        rm -f src/osu_lib/lib/Createdump*
-        
-        # 删除庞大的视频解码库 (算PP不需要)
-        find src/osu_lib/lib -name "*ffmpeg*" -delete
-        find src/osu_lib/lib -name "*libav*" -delete
-        find src/osu_lib/lib -name "*libsw*" -delete
         
         echo "=== ${{ matrix.rid }} Final Size ==="
         du -sh src/osu_lib/lib
