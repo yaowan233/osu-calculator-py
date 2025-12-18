@@ -1,83 +1,81 @@
-name: Build and Package
+name: Build Wheels
 
 on: [push, workflow_dispatch]
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  build_wheels:
+    name: Build for ${{ matrix.rid }}
+    runs-on: ubuntu-latest  # 使用 Linux 即可编译所有平台的 .NET DLL
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os_name: Windows
+            rid: win-x64
+            whl_tag: win_amd64
+          - os_name: Linux
+            rid: linux-x64
+            whl_tag: manylinux_2_17_x86_64.manylinux2014_x86_64
+          - os_name: macOS-Intel
+            rid: osx-x64
+            whl_tag: macosx_10_15_x86_64
+          - os_name: macOS-ARM64
+            rid: osx-arm64
+            whl_tag: macosx_11_0_arm64
 
     steps:
-    # 1. 拉取代码
     - uses: actions/checkout@v4
       with:
         submodules: recursive
 
-    # 2. 安装 uv (极速 Python 管理工具)
     - name: Install uv
       uses: astral-sh/setup-uv@v2
 
-    # 3. 设置 .NET 8 (用于编译 C#)
-    - name: Setup .NET
+    - name: Setup .NET 8
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: 8.0.x
 
-    # 4. 编译 C# DLL
-    - name: Publish osu-tools
+    # 1. 针对特定架构发布 (RID)
+    - name: Publish DLLs for ${{ matrix.rid }}
       run: |
-        # 假设你需要编译 osu-tools 下的 PerformanceCalculator 项目
-        # 请根据实际 csproj 路径修改
-        cd osu-tools/PerformanceCalculator 
-        dotnet publish -c Release -o ../../compiled_dlls
+        cd osu-tools/PerformanceCalculator
+        # 使用 -r 指定具体架构，确保只下载该架构的原生库
+        dotnet publish -c Release -r ${{ matrix.rid }} --no-self-contained -o ../../compiled_dlls
 
-    # 5. 【关键】将编译产物移动到 src/osu_lib/lib
-    - name: Inject DLLs into Source
+    # 2. 注入文件并精简体积
+    - name: Inject and Prune
       run: |
         mkdir -p src/osu_lib/lib
-        # 复制 dll, json (runtime config), 和 runtimes (native libs)
         cp -r compiled_dlls/* src/osu_lib/lib/
         
-        cd src/osu_lib/lib/runtimes
+        # 删除不必要的文件
+        rm -f src/osu_lib/lib/*.pdb
+        rm -f src/osu_lib/lib/*.exe
+        rm -f src/osu_lib/lib/Createdump*
         
-        rm -rf android*
-        rm -rf ios*
-        rm -rf tvos*
+        # 删除庞大的视频解码库 (算PP不需要)
+        find src/osu_lib/lib -name "*ffmpeg*" -delete
+        find src/osu_lib/lib -name "*libav*" -delete
+        find src/osu_lib/lib -name "*libsw*" -delete
         
-        rm -rf browser*
-        rm -rf tizen*
-        rm -rf maccatalyst*
-        
-        rm -rf *-x86      # win-x86, linux-x86
-        rm -rf *-arm      # linux-arm (32位), android-arm
-        rm -rf *-armel
-        
-        rm -rf *-mips64
-        rm -rf *-s390x
-        rm -rf *-ppc64le
-        
-        # 删除 Musl Linux (除非你要支持 Alpine Linux，否则标准 Linux 都是用 glibc)
-        rm -rf linux-musl*
-        
-        # 删除 Windows ARM (目前 Windows 上主要还是 x64)
-        rm -rf win-arm*
-        
-        cd ..
-        # 清理掉不需要的 exe 或者 pdb (调试符号)，减小体积
-        # 删除调试符号 (.pdb) 和 可执行文件 (.exe)
-        rm -f *.pdb *.exe
-        
-        rm osu.Game.Resources.dll
-        
-        echo "=== Files to be packed ==="
-        ls
+        echo "=== ${{ matrix.rid }} Final Size ==="
+        du -sh src/osu_lib/lib
 
-    # 6. 使用 uv 构建 Wheel
-    - name: Build with uv
-      run: uv build
+    # 3. 构建 Wheel 并重命名平台标签
+    - name: Build and Tag Wheel
+      run: |
+        uv build
+        cd dist
+        ORIGINAL_WHL=$(ls *.whl)
+        # 将 any 替换为 matrix 中定义的 whl_tag
+        NEW_WHL="${ORIGINAL_WHL//any/${{ matrix.whl_tag }}}"
+        mv "$ORIGINAL_WHL" "$NEW_WHL"
+        echo "Generated wheel: $NEW_WHL"
 
-    # 7. 上传构建产物 (dist 文件夹)
-    - name: Upload Artifacts
+    # 4. 上传产物
+    - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: wheels
-        path: dist/*
+        name: wheels-${{ matrix.rid }}
+        path: dist/*.whl
