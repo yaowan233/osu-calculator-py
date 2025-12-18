@@ -19,15 +19,16 @@ class CalculationResult:
     mode: int = 0
     stars: float = 0.0
     pp: float = 0.0
+    pp_aim: float = 0.0
+    pp_speed: float = 0.0
+    pp_acc: float = 0.0
+    pp_flashlight: float = 0.0
     max_combo: int = 0
-    # 实际参与计算的 HitResult 统计 (用于调试)
     stats_used: Dict[str, int] = field(default_factory=dict)
-    # 如果发生错误，错误信息将存储在此，且上述数值可能无效
     error: Optional[str] = None
 
     @property
     def is_success(self) -> bool:
-        """检查计算是否成功"""
         return self.error is None
 
 
@@ -524,14 +525,23 @@ class OsuCalculator:
             perf_calc = ruleset.CreatePerformanceCalculator()
             pp_attr = perf_calc.Calculate(score, diff_attr)
 
-            # 6. 返回结构化数据
-            # 将 C# 的 HitResult 枚举转为字符串，方便调试查看
+            _aim = getattr(pp_attr, 'Aim', 0.0)
+            _speed = getattr(pp_attr, 'Speed', 0.0)
+            _acc = getattr(pp_attr, 'Accuracy', 0.0)
+            _fl = getattr(pp_attr, 'Flashlight', 0.0)
+
+
+            # 返回结构化数据
             stats_readable = {str(k): v for k, v in stats.items()}
 
             return CalculationResult(
                 mode=mode,
                 stars=diff_attr.StarRating,
                 pp=pp_attr.Total,
+                pp_aim=_aim,
+                pp_speed=_speed,
+                pp_acc=_acc,
+                pp_flashlight=_fl,
                 max_combo=diff_attr.MaxCombo,
                 stats_used=stats_readable
             )
