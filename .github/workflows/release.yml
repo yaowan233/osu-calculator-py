@@ -1,0 +1,122 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build_wheels:
+    name: Build ${{ matrix.rid }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Windows x64
+          - rid: win-x64
+            whl_tag: win_amd64
+          # Linux x64
+          - rid: linux-x64
+            whl_tag: manylinux_2_17_x86_64.manylinux2014_x86_64
+          # macOS Intel
+          - rid: osx-x64
+            whl_tag: macosx_10_15_x86_64
+          # macOS Apple Silicon
+          - rid: osx-arm64
+            whl_tag: macosx_11_0_arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+          python-version: "3.12"
+
+      - name: Check Version matches Tag
+        run: |
+          PROJECT_VERSION=$(uv run python -c "import tomli; print(tomli.load(open('pyproject.toml', 'rb'))['project']['version'])" 2>/dev/null || grep -m 1 'version = ' pyproject.toml | cut -d '"' -f 2)
+          TAG_VERSION=${GITHUB_REF#refs/tags/v}
+          
+          echo "Project Version: $PROJECT_VERSION"
+          echo "Tag Version:     $TAG_VERSION"
+          
+          if [ "$PROJECT_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::Version mismatch! pyproject.toml ($PROJECT_VERSION) != Tag ($TAG_VERSION)"
+            exit 1
+          fi
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Publish DLLs
+        run: |
+          cd osu-tools/PerformanceCalculator
+          dotnet publish -c Release -r ${{ matrix.rid }} --no-self-contained -o ../../compiled_dlls
+
+      - name: Inject and Prune
+        run: |
+          # 注意：请确保你的包名路径正确，这里假设是 osu_tools
+          TARGET_DIR="src/osu_tools/lib"
+          mkdir -p $TARGET_DIR
+          cp -r compiled_dlls/* $TARGET_DIR/
+          
+          # 清理垃圾文件
+          rm -f $TARGET_DIR/*.pdb $TARGET_DIR/*.exe $TARGET_DIR/Createdump* $TARGET_DIR/osu.Game.Resources.dll
+          echo "=== Size Check (${{ matrix.rid }}) ==="
+          du -sh $TARGET_DIR
+
+      - name: Build Wheel
+        run: uv build
+
+
+      - name: Rename Wheel
+        run: |
+          cd dist
+          FILE=$(ls *.whl)
+          NEW_FILE="${FILE//any/${{ matrix.whl_tag }}}"
+          mv "$FILE" "$NEW_FILE"
+          echo "Renamed to $NEW_FILE"
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.rid }}
+          path: dist/*.whl
+
+  publish:
+    name: Publish to PyPI
+    needs: build_wheels
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+      contents: write
+
+    steps:
+      - name: Download all wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+
+      - name: List files to publish
+        run: ls -R dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          gh release create "$TAG_NAME" dist/*.whl --generate-notes --clobber
