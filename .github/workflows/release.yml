@@ -114,9 +114,12 @@ jobs:
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
 
-      - name: Create GitHub Release
+      - name: Create or Update GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG_NAME=${GITHUB_REF#refs/tags/}
-          gh release create "$TAG_NAME" dist/*.whl --generate-notes --clobber
+          
+          gh release create "$TAG_NAME" --generate-notes || echo "Release $TAG_NAME already exists, skipping create."
+          
+          gh release upload "$TAG_NAME" dist/*.whl --clobber

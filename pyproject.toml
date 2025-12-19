@@ -1,7 +1,8 @@
 [project]
 name = "osu-tools-py"
-version = "0.1.1"
+version = "0.1.2"
 description = "A Python wrapper for osu! tools using pythonnet"
+readme = "README.md"
 requires-python = ">=3.10,<3.14"
 dependencies = [
     "pythonnet>=3.0.5",
