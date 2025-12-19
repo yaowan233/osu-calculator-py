@@ -3,7 +3,7 @@
 [![PyPI](https://img.shields.io/pypi/v/osu-tools-py)](https://pypi.org/project/osu-tools-py/)
 [![License](https://img.shields.io/github/license/yaowan233/osu-tools-py)](LICENSE)
 
-[中文说明](#chinese)
+[中文说明](https://github.com/yaowan233/osu-tools-py/blob/main/README_zh.md)
 
 A high-performance Python wrapper for **[ppy/osu-tools](https://github.com/ppy/osu-tools)**, powered by **[pythonnet](https://pythonnet.github.io/)**.
 
