@@ -1,6 +1,6 @@
 [project]
 name = "osu-tools-py"
-version = "0.1.0"
+version = "0.1.1"
 description = "A Python wrapper for osu! tools using pythonnet"
 requires-python = ">=3.10,<3.14"
 dependencies = [
@@ -18,6 +18,3 @@ packages = ["src/osu_tools"]
 artifacts = [
     "src/osu_tools/lib/**/*"
 ]
-
-[tool.hatch.build.targets.wheel.force-include]
-"src/osu_tools/lib" = "osu_tools/lib"
