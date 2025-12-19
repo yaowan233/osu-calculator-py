@@ -98,7 +98,7 @@ class OsuEnvironment:
         # 1. 定位 DLL 目录 (合并了你原本代码中的重复逻辑)
         current_dir = Path(__file__).parent.absolute()
         local_lib = current_dir / "lib"
-        # 假设结构: src/osu_lib/calculator.py -> osu-tools/published_output
+        # 假设结构: src/osu_tools/calculator.py -> osu-tools/published_output
         dev_lib = current_dir.parent.parent / "osu-tools" / "published_output"
 
         dll_folder: Path

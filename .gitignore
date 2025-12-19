@@ -24,6 +24,6 @@ compiled_dlls/
 .idea/
 
 
-src/osu_lib/lib/*.dll
-src/osu_lib/lib/*.json
-!src/osu_lib/lib/.gitkeep
+src/osu_tools/lib/*.dll
+src/osu_tools/lib/*.json
+!src/osu_tools/lib/.gitkeep

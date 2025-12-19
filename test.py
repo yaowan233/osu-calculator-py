@@ -1,4 +1,4 @@
-from src.osu_lib.calculator import OsuCalculator
+from src.osu_tools.calculator import OsuCalculator
 
 # 1. 实例化 (只需指定一次 DLL 路径)
 # 如果你的 published_output 文件夹就在当前目录的 osu-tools 下，甚至不需要传参数
