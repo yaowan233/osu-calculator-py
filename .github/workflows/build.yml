@@ -36,6 +36,10 @@ jobs:
       with:
         dotnet-version: 8.0.x
 
+    - name: Use latest osu! performance packages
+      run: |
+        sed -i 's/Version="2026\.317\.0"/Version="2026.702.1"/g' osu-tools/PerformanceCalculator/PerformanceCalculator.csproj
+
     # 1. 针对特定架构发布 (RID)
     - name: Publish DLLs for ${{ matrix.rid }}
       run: |
@@ -46,16 +50,16 @@ jobs:
     # 2. 注入文件并精简体积
     - name: Inject and Prune
       run: |
-        mkdir -p src/osu_lib/lib
-        cp -r compiled_dlls/* src/osu_lib/lib/
+        mkdir -p src/osu_tools/lib
+        cp -r compiled_dlls/* src/osu_tools/lib/
         
         # 删除不必要的文件
-        rm -f src/osu_lib/lib/*.pdb
-        rm -f src/osu_lib/lib/*.exe
-        rm -f src/osu_lib/lib/osu.Game.Resources.dll
+        rm -f src/osu_tools/lib/*.pdb
+        rm -f src/osu_tools/lib/*.exe
+        rm -f src/osu_tools/lib/osu.Game.Resources.dll
         
         echo "=== ${{ matrix.rid }} Final Size ==="
-        du -sh src/osu_lib/lib
+        du -sh src/osu_tools/lib
 
     # 3. 构建 Wheel 并重命名平台标签
     - name: Build and Tag Wheel

@@ -56,6 +56,10 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
+      - name: Use latest osu! performance packages
+        run: |
+          sed -i 's/Version="2026\.317\.0"/Version="2026.702.1"/g' osu-tools/PerformanceCalculator/PerformanceCalculator.csproj
+
       - name: Publish DLLs
         run: |
           cd osu-tools/PerformanceCalculator
