@@ -1,1 +1,1 @@
-from .calculator import OsuCalculator, CalculationResult
+from .calculator import OsuCalculator, CalculationResult, CalculationRequest

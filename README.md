@@ -88,6 +88,18 @@ print(f"Real PP: {result.pp:.2f}")
 print(f"Real PPAcc: {result.pp_acc:.2f}") # PP from Accuracy
 ```
 
+### Batch Calculation
+
+When calculating multiple scores for the same beatmap/mode/mods, use
+`calculate_many()` to reuse beatmap decoding and difficulty calculation:
+
+```python
+results = calc.calculate_many([
+    {"file_path": "beatmaps/12345.osu", "mode": 0, "mods": ["HD", "CL"], "acc": 100.0},
+    {"file_path": "beatmaps/12345.osu", "mode": 0, "mods": ["HD", "CL"], "acc": 98.5, "misses": 1},
+])
+```
+
 
 ### Lazer Calculation Example
 If you want to calculate PP for the Lazer scoring system (where slider tails affect accuracy):

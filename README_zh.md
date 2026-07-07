@@ -83,6 +83,18 @@ print(f"实际 PP: {result.pp:.2f}")
 print(f"Acc PP: {result.pp_acc:.2f}")
 ```
 
+### 批量计算
+
+同一张图、同一模式、同一 Mods 下计算多组成绩时，可以使用
+`calculate_many()` 复用谱面解码和难度计算：
+
+```python
+results = calc.calculate_many([
+    {"file_path": "beatmaps/12345.osu", "mode": 0, "mods": ["HD", "CL"], "acc": 100.0},
+    {"file_path": "beatmaps/12345.osu", "mode": 0, "mods": ["HD", "CL"], "acc": 98.5, "misses": 1},
+])
+```
+
 
 ### 3. Lazer 模式计算示例
 如果你想计算新版 Lazer 计分系统下的 PP (滑条尾计入准确率)：

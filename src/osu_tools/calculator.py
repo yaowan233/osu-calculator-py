@@ -6,7 +6,7 @@ import subprocess
 import shutil
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import List, Dict, Union, Optional, Any, Type
+from typing import List, Dict, Union, Optional, Any, Type, Sequence, Tuple
 
 
 # ================= 数据结构定义 =================
@@ -30,6 +30,21 @@ class CalculationResult:
     @property
     def is_success(self) -> bool:
         return self.error is None
+
+
+@dataclass
+class CalculationRequest:
+    """
+    单次计算请求。用于 calculate_many；字段与 calculate 参数保持一致。
+    """
+    file_path: str
+    mode: int = 0
+    mods: Optional[List[Union[str, Dict[str, Any], Any]]] = None
+    acc: float = 100.0
+    combo: Optional[int] = None
+    misses: int = 0
+    legacy_total_score: Optional[int] = None
+    statistics: Optional[Union[Dict[str, int], Any]] = None
 
 
 # ================= 库配置与初始化 =================
@@ -275,6 +290,114 @@ class OsuCalculator:
         key_mods = {"1K", "2K", "3K", "4K", "5K", "6K", "7K", "8K", "9K", "10K"}
         return [mod for mod in mods if (self._get_mod_acronym(mod) or "").upper() not in key_mods]
 
+    def _mods_cache_key(self, mods: Optional[Sequence[Union[str, Dict[str, Any], Any]]]) -> Tuple[str, ...]:
+        if not mods:
+            return tuple()
+        return tuple((self._get_mod_acronym(mod) or "").upper() for mod in mods)
+
+    def _get_request_value(self, request: Union[CalculationRequest, Dict[str, Any], Any], name: str, default: Any) -> Any:
+        if isinstance(request, dict):
+            return request.get(name, default)
+        return getattr(request, name, default)
+
+    def _normalize_request(self, request: Union[CalculationRequest, Dict[str, Any], Any]) -> Dict[str, Any]:
+        mods = self._get_request_value(request, "mods", None)
+        return {
+            "file_path": self._get_request_value(request, "file_path", None),
+            "mode": int(self._get_request_value(request, "mode", 0)),
+            "mods": list(mods) if mods else [],
+            "acc": float(self._get_request_value(request, "acc", 100.0)),
+            "combo": self._get_request_value(request, "combo", None),
+            "misses": int(self._get_request_value(request, "misses", 0)),
+            "legacy_total_score": self._get_request_value(request, "legacy_total_score", None),
+            "statistics": self._get_request_value(request, "statistics", None),
+        }
+
+    def _load_working_beatmap(self, abs_path: str, ruleset: Any) -> Tuple[Any, Any, int]:
+        fs = None
+        reader = None
+        try:
+            fs = self.FileStream(abs_path, self.FileMode.Open, self.FileAccess.Read, self.FileShare.Read)
+            reader = self.LineBufferedReader(fs)
+            decoder = self.LegacyBeatmapDecoder()
+            beatmap = decoder.Decode(reader)
+
+            original_ruleset_id = beatmap.BeatmapInfo.Ruleset.OnlineID
+            converter = ruleset.CreateBeatmapConverter(beatmap)
+            if converter.CanConvert():
+                beatmap = converter.Convert()
+
+            return beatmap, self.FlatWorkingBeatmap(beatmap), original_ruleset_id
+        finally:
+            if reader:
+                reader.Dispose()
+            if fs:
+                fs.Dispose()
+
+    def _calculate_prepared(
+            self,
+            mode: int,
+            ruleset: Any,
+            beatmap: Any,
+            working_beatmap: Any,
+            csharp_mods: Any,
+            diff_attr: Any,
+            acc: float,
+            combo: Optional[int],
+            misses: int,
+            legacy_total_score: Optional[int],
+            statistics: Optional[Union[Dict[str, int], Any]]
+    ) -> CalculationResult:
+        stats: Dict[Any, int] = {}
+
+        effective_misses = misses
+        if self._has_valid_stats(statistics):
+            effective_misses = self._extract_stat(statistics, 'miss')
+
+        if mode == 0:
+            stats = self._sim_osu(acc, beatmap, effective_misses, statistics)
+        elif mode == 1:
+            stats = self._sim_taiko(acc, beatmap, effective_misses, statistics)
+        elif mode == 2:
+            stats = self._sim_catch(acc, beatmap, effective_misses, statistics)
+        elif mode == 3:
+            stats = self._sim_mania(acc, beatmap, effective_misses, statistics)
+
+        score = self.ScoreInfo()
+        score.Ruleset = ruleset.RulesetInfo
+        score.BeatmapInfo = working_beatmap.BeatmapInfo
+        score.Mods = csharp_mods.ToArray()
+        score.LegacyTotalScore = int(legacy_total_score) if legacy_total_score is not None and int(
+            legacy_total_score) > 0 else 0
+        score.MaxCombo = int(combo) if combo is not None else diff_attr.MaxCombo
+        score.Accuracy = float(acc) / 100.0
+
+        for result, count in stats.items():
+            if count > 0:
+                score.Statistics[result] = count
+
+        perf_calc = ruleset.CreatePerformanceCalculator()
+        pp_attr = perf_calc.Calculate(score, diff_attr)
+
+        _aim = getattr(pp_attr, 'Aim', 0.0)
+        _speed = getattr(pp_attr, 'Speed', 0.0)
+        _acc = getattr(pp_attr, 'Accuracy', 0.0)
+        _fl = getattr(pp_attr, 'Flashlight', 0.0)
+
+        stats_readable = {str(k): v for k, v in stats.items()}
+
+        return CalculationResult(
+            mode=mode,
+            stars=diff_attr.StarRating,
+            pp=pp_attr.Total,
+            pp_aim=_aim,
+            pp_speed=_speed,
+            pp_acc=_acc,
+            pp_flashlight=_fl,
+            max_combo=diff_attr.MaxCombo,
+            stats_used=stats_readable
+        )
+
     def _extract_stat(self, stats_obj: Union[Dict, Any, None], attr_name: str, default: int = 0) -> int:
         """安全提取统计属性"""
         if stats_obj is None:
@@ -473,100 +596,90 @@ class OsuCalculator:
         :param statistics: Detailed hit statistics (dict or object), e.g. {'great': 300, 'ok': 10}.
         :return: CalculationResult object.
         """
-        if mods is None: mods = []
-        abs_path = os.path.abspath(file_path)
+        request = CalculationRequest(
+            file_path=file_path,
+            mode=mode,
+            mods=mods,
+            acc=acc,
+            combo=combo,
+            misses=misses,
+            legacy_total_score=legacy_total_score,
+            statistics=statistics
+        )
+        return self.calculate_many([request])[0]
 
-        if not os.path.exists(abs_path):
-            return CalculationResult(error=f"File not found: {abs_path}")
+    def calculate_many(
+            self,
+            requests: Sequence[Union[CalculationRequest, Dict[str, Any], Any]]
+    ) -> List[CalculationResult]:
+        """
+        Batch-calculate PP/SR.
 
-        ruleset = self.rulesets.get(mode)
-        if not ruleset:
-            return CalculationResult(error=f"Invalid mode: {mode}")
+        Requests with the same file_path, mode, and mods share beatmap decoding,
+        ruleset conversion, mod parsing, and difficulty calculation. Different
+        acc/combo/miss/statistics values still get their own performance result.
+        """
+        normalized_requests = [self._normalize_request(request) for request in requests]
+        results: List[Optional[CalculationResult]] = [None] * len(normalized_requests)
+        groups: Dict[Tuple[str, int, Tuple[str, ...]], List[int]] = {}
 
-        fs = None
-        reader = None
-        try:
-            # 1. 加载谱面
-            fs = self.FileStream(abs_path, self.FileMode.Open, self.FileAccess.Read, self.FileShare.Read)
-            reader = self.LineBufferedReader(fs)
-            decoder = self.LegacyBeatmapDecoder()
-            beatmap = decoder.Decode(reader)
+        for index, request in enumerate(normalized_requests):
+            file_path = request["file_path"]
+            if not file_path:
+                results[index] = CalculationResult(error="Missing file_path")
+                continue
 
-            original_ruleset_id = beatmap.BeatmapInfo.Ruleset.OnlineID
-            converter = ruleset.CreateBeatmapConverter(beatmap)
-            if converter.CanConvert():
-                beatmap = converter.Convert()
-            working_beatmap = self.FlatWorkingBeatmap(beatmap)
+            abs_path = os.path.abspath(file_path)
+            request["abs_path"] = abs_path
 
-            # 2. Mod 解析与难度计算
-            if mode == 3 and original_ruleset_id != 3:
-                mods = self._filter_mods_for_converted_mania(mods)
-            csharp_mods = self._parse_mods(mods, ruleset)
-            diff_calc = ruleset.CreateDifficultyCalculator(working_beatmap)
-            diff_attr = diff_calc.Calculate(csharp_mods)
+            if not os.path.exists(abs_path):
+                results[index] = CalculationResult(error=f"File not found: {abs_path}")
+                continue
 
-            # 3. Hit Results 填充
-            stats: Dict[Any, int] = {}
+            mode = request["mode"]
+            if mode not in self.rulesets:
+                results[index] = CalculationResult(error=f"Invalid mode: {mode}")
+                continue
 
-            effective_misses = misses
-            if self._has_valid_stats(statistics):
-                effective_misses = self._extract_stat(statistics, 'miss')
+            key = (abs_path, mode, self._mods_cache_key(request["mods"]))
+            groups.setdefault(key, []).append(index)
 
-            if mode == 0:
-                stats = self._sim_osu(acc, beatmap, effective_misses, statistics)
-            elif mode == 1:
-                stats = self._sim_taiko(acc, beatmap, effective_misses, statistics)
-            elif mode == 2:
-                stats = self._sim_catch(acc, beatmap, effective_misses, statistics)
-            elif mode == 3:
-                stats = self._sim_mania(acc, beatmap, effective_misses, statistics)
+        for (abs_path, mode, _), indexes in groups.items():
+            ruleset = self.rulesets[mode]
+            try:
+                first_request = normalized_requests[indexes[0]]
+                mods = first_request["mods"]
 
-            # 4. 构造 ScoreInfo
-            score = self.ScoreInfo()
-            score.Ruleset = ruleset.RulesetInfo
-            score.BeatmapInfo = working_beatmap.BeatmapInfo
-            score.Mods = csharp_mods.ToArray()
+                beatmap, working_beatmap, original_ruleset_id = self._load_working_beatmap(abs_path, ruleset)
 
-            # 设置 Legacy Score 以启用 Stable 物理/判定逻辑
-            score.LegacyTotalScore = int(legacy_total_score) if legacy_total_score is not None and int(
-                legacy_total_score) > 0 else 0
+                if mode == 3 and original_ruleset_id != 3:
+                    mods = self._filter_mods_for_converted_mania(mods)
 
-            score.MaxCombo = int(combo) if combo is not None else diff_attr.MaxCombo
-            score.Accuracy = float(acc) / 100.0
+                csharp_mods = self._parse_mods(mods, ruleset)
+                diff_calc = ruleset.CreateDifficultyCalculator(working_beatmap)
+                diff_attr = diff_calc.Calculate(csharp_mods)
 
-            for result, count in stats.items():
-                if count > 0:
-                    score.Statistics[result] = count
+                for index in indexes:
+                    request = normalized_requests[index]
+                    results[index] = self._calculate_prepared(
+                        mode=mode,
+                        ruleset=ruleset,
+                        beatmap=beatmap,
+                        working_beatmap=working_beatmap,
+                        csharp_mods=csharp_mods,
+                        diff_attr=diff_attr,
+                        acc=request["acc"],
+                        combo=request["combo"],
+                        misses=request["misses"],
+                        legacy_total_score=request["legacy_total_score"],
+                        statistics=request["statistics"]
+                    )
 
-            # 5. 计算 PP
-            perf_calc = ruleset.CreatePerformanceCalculator()
-            pp_attr = perf_calc.Calculate(score, diff_attr)
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                error = str(e)
+                for index in indexes:
+                    results[index] = CalculationResult(error=error)
 
-            _aim = getattr(pp_attr, 'Aim', 0.0)
-            _speed = getattr(pp_attr, 'Speed', 0.0)
-            _acc = getattr(pp_attr, 'Accuracy', 0.0)
-            _fl = getattr(pp_attr, 'Flashlight', 0.0)
-
-
-            # 返回结构化数据
-            stats_readable = {str(k): v for k, v in stats.items()}
-
-            return CalculationResult(
-                mode=mode,
-                stars=diff_attr.StarRating,
-                pp=pp_attr.Total,
-                pp_aim=_aim,
-                pp_speed=_speed,
-                pp_acc=_acc,
-                pp_flashlight=_fl,
-                max_combo=diff_attr.MaxCombo,
-                stats_used=stats_readable
-            )
-
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            return CalculationResult(error=str(e))
-        finally:
-            if reader: reader.Dispose()
-            if fs: fs.Dispose()
+        return [result if result is not None else CalculationResult(error="Unknown calculation error") for result in results]
