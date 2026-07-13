@@ -75,8 +75,8 @@ wheels = [
 ]
 
 [[package]]
-name = "osu-calculator-py"
-version = "0.1.0"
+name = "osu-tools-py"
+version = "0.1.6"
 source = { editable = "." }
 dependencies = [
     { name = "pythonnet" },

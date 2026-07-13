@@ -4,6 +4,7 @@ import math
 import warnings
 import subprocess
 import shutil
+from collections import OrderedDict
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import List, Dict, Union, Optional, Any, Type, Sequence, Tuple
@@ -172,7 +173,7 @@ class OsuEnvironment:
 # ================= 核心计算类 =================
 
 class OsuCalculator:
-    def __init__(self):
+    def __init__(self, prepared_cache_size: int = 0):
         """
         初始化计算器。如果环境未配置，会自动调用 setup。
         """
@@ -240,6 +241,26 @@ class OsuCalculator:
             2: CatchRuleset(),
             3: ManiaRuleset()
         }
+        self.prepared_cache_size = max(0, int(prepared_cache_size))
+        self._prepared_cache: OrderedDict[Tuple[Any, ...], Tuple[Any, ...]] = OrderedDict()
+
+    def clear_prepared_cache(self) -> None:
+        """Release decoded beatmaps and difficulty attributes kept for reuse."""
+        self._prepared_cache.clear()
+
+    def _get_prepared_cache(self, key: Tuple[Any, ...]) -> Optional[Tuple[Any, ...]]:
+        prepared = self._prepared_cache.get(key)
+        if prepared is not None:
+            self._prepared_cache.move_to_end(key)
+        return prepared
+
+    def _put_prepared_cache(self, key: Tuple[Any, ...], prepared: Tuple[Any, ...]) -> None:
+        if self.prepared_cache_size <= 0:
+            return
+        self._prepared_cache[key] = prepared
+        self._prepared_cache.move_to_end(key)
+        while len(self._prepared_cache) > self.prepared_cache_size:
+            self._prepared_cache.popitem(last=False)
 
     def _parse_mods(self, mod_list: Union[List[str], List[Dict], List[Any]], ruleset: Any) -> Any:
         """
@@ -644,20 +665,27 @@ class OsuCalculator:
             key = (abs_path, mode, self._mods_cache_key(request["mods"]))
             groups.setdefault(key, []).append(index)
 
-        for (abs_path, mode, _), indexes in groups.items():
+        for (abs_path, mode, mods_key), indexes in groups.items():
             ruleset = self.rulesets[mode]
             try:
                 first_request = normalized_requests[indexes[0]]
                 mods = first_request["mods"]
+                stat = os.stat(abs_path)
+                cache_key = (abs_path, mode, mods_key, stat.st_mtime_ns, stat.st_size)
+                prepared = self._get_prepared_cache(cache_key)
+                if prepared is None:
+                    beatmap, working_beatmap, original_ruleset_id = self._load_working_beatmap(abs_path, ruleset)
 
-                beatmap, working_beatmap, original_ruleset_id = self._load_working_beatmap(abs_path, ruleset)
+                    if mode == 3 and original_ruleset_id != 3:
+                        mods = self._filter_mods_for_converted_mania(mods)
 
-                if mode == 3 and original_ruleset_id != 3:
-                    mods = self._filter_mods_for_converted_mania(mods)
-
-                csharp_mods = self._parse_mods(mods, ruleset)
-                diff_calc = ruleset.CreateDifficultyCalculator(working_beatmap)
-                diff_attr = diff_calc.Calculate(csharp_mods)
+                    csharp_mods = self._parse_mods(mods, ruleset)
+                    diff_calc = ruleset.CreateDifficultyCalculator(working_beatmap)
+                    diff_attr = diff_calc.Calculate(csharp_mods)
+                    prepared = (beatmap, working_beatmap, csharp_mods, diff_attr)
+                    self._put_prepared_cache(cache_key, prepared)
+                else:
+                    beatmap, working_beatmap, csharp_mods, diff_attr = prepared
 
                 for index in indexes:
                     request = normalized_requests[index]
