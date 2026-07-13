@@ -4,7 +4,9 @@ import math
 import warnings
 import subprocess
 import shutil
+import threading
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import List, Dict, Union, Optional, Any, Type, Sequence, Tuple
@@ -173,7 +175,7 @@ class OsuEnvironment:
 # ================= 核心计算类 =================
 
 class OsuCalculator:
-    def __init__(self, prepared_cache_size: int = 0):
+    def __init__(self, prepared_cache_size: int = 0, max_workers: int = 1):
         """
         初始化计算器。如果环境未配置，会自动调用 setup。
         """
@@ -242,25 +244,30 @@ class OsuCalculator:
             3: ManiaRuleset()
         }
         self.prepared_cache_size = max(0, int(prepared_cache_size))
+        self.max_workers = max(1, int(max_workers))
         self._prepared_cache: OrderedDict[Tuple[Any, ...], Tuple[Any, ...]] = OrderedDict()
+        self._prepared_cache_lock = threading.RLock()
 
     def clear_prepared_cache(self) -> None:
         """Release decoded beatmaps and difficulty attributes kept for reuse."""
-        self._prepared_cache.clear()
+        with self._prepared_cache_lock:
+            self._prepared_cache.clear()
 
     def _get_prepared_cache(self, key: Tuple[Any, ...]) -> Optional[Tuple[Any, ...]]:
-        prepared = self._prepared_cache.get(key)
-        if prepared is not None:
-            self._prepared_cache.move_to_end(key)
-        return prepared
+        with self._prepared_cache_lock:
+            prepared = self._prepared_cache.get(key)
+            if prepared is not None:
+                self._prepared_cache.move_to_end(key)
+            return prepared
 
     def _put_prepared_cache(self, key: Tuple[Any, ...], prepared: Tuple[Any, ...]) -> None:
         if self.prepared_cache_size <= 0:
             return
-        self._prepared_cache[key] = prepared
-        self._prepared_cache.move_to_end(key)
-        while len(self._prepared_cache) > self.prepared_cache_size:
-            self._prepared_cache.popitem(last=False)
+        with self._prepared_cache_lock:
+            self._prepared_cache[key] = prepared
+            self._prepared_cache.move_to_end(key)
+            while len(self._prepared_cache) > self.prepared_cache_size:
+                self._prepared_cache.popitem(last=False)
 
     def _parse_mods(self, mod_list: Union[List[str], List[Dict], List[Any]], ruleset: Any) -> Any:
         """
@@ -665,7 +672,8 @@ class OsuCalculator:
             key = (abs_path, mode, self._mods_cache_key(request["mods"]))
             groups.setdefault(key, []).append(index)
 
-        for (abs_path, mode, mods_key), indexes in groups.items():
+        def calculate_group(group: Tuple[Tuple[str, int, Tuple[str, ...]], List[int]]) -> None:
+            (abs_path, mode, mods_key), indexes = group
             ruleset = self.rulesets[mode]
             try:
                 first_request = normalized_requests[indexes[0]]
@@ -704,10 +712,16 @@ class OsuCalculator:
                     )
 
             except Exception as e:
-                import traceback
-                traceback.print_exc()
                 error = str(e)
                 for index in indexes:
                     results[index] = CalculationResult(error=error)
+
+        group_items = list(groups.items())
+        if self.max_workers > 1 and len(group_items) > 1:
+            with ThreadPoolExecutor(max_workers=min(self.max_workers, len(group_items))) as executor:
+                list(executor.map(calculate_group, group_items))
+        else:
+            for group in group_items:
+                calculate_group(group)
 
         return [result if result is not None else CalculationResult(error="Unknown calculation error") for result in results]
